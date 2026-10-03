@@ -125,9 +125,29 @@ def build_chart_payload(
                     }
                 )
 
+        # Abdeckung des Gesamtbestands, unabhaengig vom Fenster. Ohne diese
+        # Angabe kann die Seite nicht unterscheiden, ob nie importiert wurde
+        # oder der gewaehlte Zeitraum schlicht keine Punkte enthaelt.
+        price_cov = conn.execute(
+            "SELECT MIN(day) AS lo, MAX(day) AS hi, COUNT(*) AS n FROM price_points"
+        ).fetchone()
+        oil_cov = conn.execute(
+            "SELECT MIN(day) AS lo, MAX(day) AS hi, COUNT(*) AS n FROM oil_prices"
+        ).fetchone()
+
+    # ISO-Daten sortieren lexikografisch, also reicht min/max auf den Strings.
+    lows = [d for d in (price_cov["lo"], oil_cov["lo"]) if d]
+    highs = [d for d in (price_cov["hi"], oil_cov["hi"]) if d]
+
     return {
         "generated_at": db.utcnow(),
         "window": {"from": start.isoformat(), "to": end.isoformat()},
+        "coverage": {
+            "from": min(lows) if lows else None,
+            "to": max(highs) if highs else None,
+            "price_points": price_cov["n"],
+            "oil_points": oil_cov["n"],
+        },
         "currency": "EUR",
         "series": series,
         "oil": oil,

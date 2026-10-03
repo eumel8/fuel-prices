@@ -158,7 +158,7 @@ function renderChart() {
     },
   };
 
-  if (state.chart) state.chart.destroy();
+  destroyChart();
   state.chart = new Chart($('#chart'), { type: 'line', ...config });
 }
 
@@ -172,6 +172,52 @@ function renderMeta() {
 
 function hasNet() {
   return (state.data.series || []).some((s) => s.basis === 'excl_taxes' && s.country !== 'DE');
+}
+
+function destroyChart() {
+  if (state.chart) { state.chart.destroy(); state.chart = null; }
+}
+
+// Ohne diese Unterscheidung bleibt die Seite bei leerer Datenbank einfach
+// weiss und wirkt kaputt: keine Karten, kein Diagramm, keine Meldung.
+function renderEmptyState() {
+  const isEmpty = !(state.data.series || []).length && !(state.data.oil || []).length;
+  $('#cards').hidden = isEmpty;
+  $('.chartbox').hidden = isEmpty;
+
+  const el = $('#empty');
+  if (!isEmpty) { el.hidden = true; el.innerHTML = ''; return; }
+
+  const cov = state.data.coverage || {};
+  const w = state.data.window || {};
+  let html;
+
+  if (!cov.price_points && !cov.oil_points) {
+    html = `
+      <h2>Noch keine Daten importiert</h2>
+      <p>Die Datenbank ist leer — der Import hat noch nicht stattgefunden.
+      Einmalig die Historie nachladen:</p>
+      <pre>helm upgrade fuel-prices ./charts/fuel-prices --reuse-values \\
+  --set ingest.bootstrap.enabled=true
+kubectl -n &lt;namespace&gt; wait --for=condition=complete \\
+  job/fuel-prices-bootstrap --timeout=30m
+kubectl -n &lt;namespace&gt; logs job/fuel-prices-bootstrap
+kubectl -n &lt;namespace&gt; delete job fuel-prices-bootstrap
+helm upgrade fuel-prices ./charts/fuel-prices --reuse-values \\
+  --set ingest.bootstrap.enabled=false</pre>
+      <p>Ab dann laeuft die Aktualisierung automatisch: taeglich 06:17 MEZ,
+      die EU-Wochenwerte mittwochs 10:23 MEZ.</p>`;
+  } else {
+    html = `
+      <h2>Keine Daten im gewaehlten Zeitraum</h2>
+      <p>Der Bestand deckt ${cov.from ? fmtDate(cov.from) : '?'} bis
+      ${cov.to ? fmtDate(cov.to) : '?'} ab
+      (${cov.price_points || 0} Kraftstoffpunkte, ${cov.oil_points || 0} Rohoelpunkte).
+      Gewaehlt ist ${w.from ? fmtDate(w.from) : '?'} bis
+      ${w.to ? fmtDate(w.to) : '?'}. Bitte den Zeitraum aendern.</p>`;
+  }
+  el.innerHTML = html;
+  el.hidden = false;
 }
 
 async function load() {
@@ -190,8 +236,13 @@ async function load() {
     state.data = await res.json();
     $('#net').disabled = !hasNet();
     renderCards();
-    renderChart();
+    if (!(state.data.series || []).length && !(state.data.oil || []).length) {
+      destroyChart();
+    } else {
+      renderChart();
+    }
     renderMeta();
+    renderEmptyState();
   } catch (err) {
     $('#status').className = 'status err';
     $('#status').textContent = `Fehler: ${err.message}`;

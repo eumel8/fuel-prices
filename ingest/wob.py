@@ -9,7 +9,7 @@ import httpx
 import openpyxl
 
 from app import db
-from app.config import HTTP_TIMEOUT, USER_AGENT, WOB_HISTORY_URL
+from app.config import DATA_DIR, HTTP_TIMEOUT, USER_AGENT, WOB_HISTORY_URL
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +23,9 @@ SHEETS = (
     ("Prices wo taxes", "excl_taxes"),
 )
 
-CACHE = Path(__file__).resolve().parent.parent / "data" / "wob_history.xlsx"
+# Der Cache liegt bewusst neben der Datenbank auf dem PVC. Ein fester Pfad
+# unter /app wuerde im Container an readOnlyRootFilesystem scheitern.
+CACHE = DATA_DIR / "wob_history.xlsx"
 
 
 def _product_columns(header: tuple, sheet_basis: str) -> dict[tuple[str, str, str], int]:

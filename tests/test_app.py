@@ -198,6 +198,42 @@ class ChartPayloadTest(unittest.TestCase):
             self.assertTrue(all(isinstance(v, int | float) for v in values))
 
 
+class CoverageTest(unittest.TestCase):
+    """coverage unterscheidet 'nie importiert' von 'Zeitraum passt nicht'."""
+
+    def test_coverage_spans_the_whole_database(self) -> None:
+        cov = build_chart_payload()["coverage"]
+        self.assertEqual(cov["from"], "2026-01-05")
+        self.assertEqual(cov["to"], "2026-01-12")
+        self.assertGreater(cov["price_points"], 0)
+        self.assertGreater(cov["oil_points"], 0)
+
+    def test_coverage_ignores_the_requested_window(self) -> None:
+        # Fenster ohne Treffer: das Frontend braucht trotzdem den Gesamtbestand,
+        # sonst zeigt es eine leere Seite ohne erklaerung.
+        payload = build_chart_payload(from_="2019-01-01", to="2019-01-31")
+        self.assertEqual(payload["series"], [])
+        self.assertEqual(payload["oil"], [])
+        self.assertEqual(payload["coverage"]["from"], "2026-01-05")
+
+    def test_coverage_on_an_empty_database(self) -> None:
+        # Regression: leere DB lieferte keine Info, die Seite blieb weiss.
+        with tempfile.TemporaryDirectory() as tmp:
+            original = db.DB_PATH
+            db.DB_PATH = Path(tmp) / "leer.sqlite3"
+            try:
+                db.init_db()
+                payload = build_chart_payload()
+            finally:
+                db.DB_PATH = original
+        self.assertEqual(payload["series"], [])
+        self.assertEqual(payload["oil"], [])
+        self.assertIsNone(payload["coverage"]["from"])
+        self.assertIsNone(payload["coverage"]["to"])
+        self.assertEqual(payload["coverage"]["price_points"], 0)
+        self.assertEqual(payload["coverage"]["oil_points"], 0)
+
+
 def _price_key(p: dict) -> tuple:
     """latest_snapshot liefert Rohfelder, kein Label."""
     return (p["country"], p["fuel"], p["basis"], p["granularity"])
@@ -270,6 +306,23 @@ class AuthConfigTest(unittest.TestCase):
         ).read_text()
         self.assertIn("FUEL_DB_PATH", helpers)
         self.assertIn("TANKERKOENIG_API_KEY", helpers)
+
+
+class UserAgentTest(unittest.TestCase):
+    """Regression: FRED antwortet nur auf User-Agents mit Kontakt-URL."""
+
+    def test_user_agent_carries_a_contact_url(self) -> None:
+        from app.config import USER_AGENT
+
+        # Gemessen auf dem Cluster: "fuel-prices/1.0" ohne URL fuehrt zu einem
+        # ReadTimeout nach 60 s, mit "(+https://...)" kommt die Antwort in 0,1 s.
+        self.assertRegex(USER_AGENT, r"\(\+https://\S+\)", USER_AGENT)
+
+    def test_every_http_client_uses_the_configured_agent(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        for name in ("wob.py", "brent.py", "tankerkoenig_de.py"):
+            source = (root / "ingest" / name).read_text()
+            self.assertIn("USER_AGENT", source, f"{name} setzt keinen User-Agent")
 
 
 class ChartRunnerContractTest(unittest.TestCase):

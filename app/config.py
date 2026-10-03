@@ -25,4 +25,8 @@ TANKERKOENIG_DEMO_KEY = "00000000-0000-0000-0000-000000000002"
 TANKERKOENIG_API_KEY = os.environ.get("TANKERKOENIG_API_KEY", "").strip() or TANKERKOENIG_DEMO_KEY
 
 HTTP_TIMEOUT = float(os.environ.get("FUEL_HTTP_TIMEOUT", "60"))
-USER_AGENT = "fuel-prices/1.0 (open-source price chart; contact: repo owner)"
+# Wichtig: FRED beantwortet nur User-Agents mit Kontakt-URL. Ein reines
+# "fuel-prices/1.0" wird ignoriert und laeuft nach 60 s in einen ReadTimeout,
+# wodurch der Brent/WTI-Import still fehlschlaegt. Die URL darum herum muss
+# bleiben. Gegen die EU-Kommission ist der User-Agent dagegen egal.
+USER_AGENT = "fuel-prices/1.0 (+https://github.com/eumel8/fuel-prices)"

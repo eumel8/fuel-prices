@@ -16,10 +16,12 @@ const html = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8')
 let captured = null;
 const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
 
-// Chart-Stub: merkt sich Datasets und Optionen.
+// Chart-Stub: merkt sich Datasets und Optionen. Nach destroy() gilt die
+// Chart als nicht mehr vorhanden - sonst wuerde der Test noch die alte
+// Konfiguration sehen und einen Fehler melden, den es nicht gibt.
 class ChartStub {
   constructor(el, config) { this.el = el; this.config = config; captured = config; }
-  destroy() {}
+  destroy() { captured = null; }
 }
 dom.window.Chart = ChartStub;
 
@@ -97,6 +99,51 @@ function check(name, cond, detail) {
   for (const l of netDs) console.log(`  ${l}`);
   check('Netto: Polen dabei', netDs.some((l) => l.includes('Polen') && l.includes('netto')));
   check('Netto: EU dabei', netDs.some((l) => l.includes('EU-Durchschnitt') && l.includes('netto')));
+
+  check('Leermeldung versteckt, solange Daten da sind',
+    window.document.querySelector('#empty').hidden === true);
+
+  // Ab hier wird fetch gemockt: die beiden Leerfaelle brauchen keinen Server.
+  const reload = async (payload) => {
+    window.fetch = async () => ({ ok: true, json: async () => payload });
+    const sel = window.document.querySelector('#range');
+    sel.value = '90';
+    sel.dispatchEvent(new window.Event('change'));
+    await new Promise((r) => setTimeout(r, 200));
+  };
+
+  // Fall 1: Datenbank komplett leer -> Ursache und Loesung nennen.
+  await reload({
+    generated_at: '2026-10-03T00:00:00Z',
+    window: { from: '2025-10-03', to: '2026-10-03' },
+    coverage: { from: null, to: null, price_points: 0, oil_points: 0 },
+    series: [], oil: [], sources: [], notes: [],
+  });
+  const empty = window.document.querySelector('#empty');
+  console.log('\nLeermeldung (leere Datenbank):');
+  console.log('  ' + empty.textContent.replace(/\s+/g, ' ').trim().slice(0, 110) + '…');
+  check('leere DB: Hinweis sichtbar', empty.hidden === false);
+  check('leere DB: nennt fehlenden Import', empty.textContent.includes('Noch keine Daten importiert'));
+  check('leere DB: nennt konkreten Befehl', empty.textContent.includes('ingest.bootstrap.enabled=true'));
+  check('leere DB: Karten ausgeblendet', window.document.querySelector('#cards').hidden === true);
+  check('leere DB: Diagramm ausgeblendet', window.document.querySelector('.chartbox').hidden === true);
+  check('leere DB: kein Chart erzeugt', captured === null || captured.data.datasets.length === 0,
+    captured ? `${captured.data.datasets.length} Datasets` : 'kein Chart');
+
+  // Fall 2: Bestand existiert, nur der Zeitraum ist falsch gewaehlt.
+  await reload({
+    generated_at: '2026-10-03T00:00:00Z',
+    window: { from: '2025-10-03', to: '2026-10-03' },
+    coverage: { from: '2026-01-05', to: '2026-01-12', price_points: 13032, oil_points: 18608 },
+    series: [], oil: [], sources: [], notes: [],
+  });
+  const outside = window.document.querySelector('#empty').textContent;
+  console.log('\nLeermeldung (Zeitraum passt nicht):');
+  console.log('  ' + outside.replace(/\s+/g, ' ').trim().slice(0, 110) + '…');
+  check('falscher Zeitraum: eigener Hinweis', outside.includes('Keine Daten im gewaehlten Zeitraum'));
+  check('falscher Zeitraum: nennt Bestand', outside.includes('05.01.2026') && outside.includes('12.01.2026'));
+  check('falscher Zeitraum: nennt Punktzahlen', outside.includes('13032') && outside.includes('18608'));
+  check('falscher Zeitraum: kein Bootstrap-Hinweis', !outside.includes('bootstrap'));
 
   console.log(`\n${failures.length === 0 ? 'ALLE CHECKS BESTANDEN' : failures.length + ' FEHLGESCHLAGEN: ' + failures.join(', ')}`);
   process.exit(failures.length === 0 ? 0 : 1);
