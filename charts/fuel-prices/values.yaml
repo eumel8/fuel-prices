@@ -69,6 +69,9 @@ tankerkoenig:
   apiKey: ""
   # Rasterpunkte je Lauf (56 = volles Bundesgebiet). Reduzieren senkt die Last.
   maxRequests: 56
+  # false = keine Tankstellen-Abfrage. Der Daily-CronJob laeuft dann mit
+  # --skip-pump weiter, damit Brent/WTI aktuell bleiben. Ohne echten Key
+  # besser false: der Demo-Key schreibt konstante Platzhalterwerte in die DB.
   enabled: true
 
 ingest:

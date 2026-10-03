@@ -55,9 +55,21 @@ Tage werden per Upsert überschrieben, keine Duplikate.
 ## Tankerkönig-Key
 
 Ohne `TANKERKOENIG_API_KEY` greift der offizielle Demo-Key. Der liefert
-ausschließlich Tankstellen im Raum Berlin mit festen Demo-Werten — die
-DE-Tageslinie entspricht dann **nicht** dem Bundesdurchschnitt. Für echte
-Daten den kostenlosen Key unter <https://tankerkoenig.de> holen:
+ausschließlich Tankstellen im Raum Berlin mit festen Demo-Werten — gemessen
+auf dem Cluster: Mittel 1,009 EUR/l bei 2337 Tankstellen, also Median = min =
+max. Solche Werte landen als `de-*-daily` in der Datenbank und **wären eine
+falsche Preisangabe** auf der Seite. Wer keinen Key hat, schaltet nur diese
+Quelle ab:
+
+```bash
+helm upgrade fuel-prices ./charts/fuel-prices --reuse-values \
+  --set tankerkoenig.enabled=false
+```
+
+Der Daily-CronJob bleibt dann bestehen und ruft `run_daily --skip-pump` auf —
+Brent/WTI werden also weiter aktualisiert, nur die deutschen Tageswerte
+fehlen. Das Diagramm zeigt dann die Wochenwerte aus dem EU-Bulletin. Für
+echte Tagesdaten den kostenlosen Key unter <https://tankerkoenig.de> holen:
 
 ```bash
 export TANKERKOENIG_API_KEY=<key>
@@ -135,9 +147,9 @@ Versionstags fahren will, überschreibt `image.tag`.
 
 | Auslöser | Tags im GHCR |
 | --- | --- |
-| Push auf `main` | `1.0.0` (appVersion), `<sha>`, `latest` |
-| Push auf `v1.1.0` | `1.0.0`, `1.1.0`, `1.1`, `v1.1.0`, `<sha>`, `latest` |
-| Push auf `nightly` | `1.0.0`, `nightly`, `<sha>`, `latest` |
+| Push auf `main` | `1.0.0` (appVersion), `sha-<kurzhash>`, `latest` |
+| Push auf `v1.1.0` | `1.0.0`, `1.1.0`, `1.1`, `v1.1.0`, `sha-<kurzhash>`, `latest` |
+| Push auf `nightly` | `1.0.0`, `nightly`, `sha-<kurzhash>`, `latest` |
 
 Jeder Git-Tag baut ein Image, auch einer ohne Semver – der Tag landet 1:1 als
 Image-Tag in der Registry. `latest` zeigt immer auf den letzten Build aus

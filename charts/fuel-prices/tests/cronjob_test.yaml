@@ -125,13 +125,41 @@ tests:
           path: spec.jobTemplate.spec.template.spec.restartPolicy
           value: OnFailure
 
-  - it: entfaellt, wenn tankerkoenig deaktiviert ist
+  - it: laeuft ohne Tankerkonig weiter, aber nur mit Brent
+    # Ohne Key sollen die Rohoelpreise aktualisiert bleiben; nur die
+    # Tankstellen-Abfrage entfaellt. Sonst wuerde das Abschalten der
+    # Tagesdaten auch Brent/WTI einfrieren.
     set:
       tankerkoenig:
         enabled: false
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-daily
     asserts:
-      - hasDocuments:
-          count: 1
+      - isKind:
+          of: CronJob
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[2]
+          value: ingest.run_daily
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[3]
+          value: --skip-pump
+      - notContains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command
+          content: --max-requests
+
+  - it: setzt ohne tankerkoenig keinen API-Key in die Umgebung
+    set:
+      tankerkoenig:
+        enabled: false
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-daily
+    asserts:
+      - notContains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: TANKERKOENIG_API_KEY
 
   - it: laesst sich der Daily-Job abschalten
     set:

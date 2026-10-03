@@ -1,8 +1,12 @@
 {{- $fullName := include "fuel-prices.fullname" . -}}
 {{- $secretName := printf "%s-tankerkoenig" $fullName -}}
 
-{{/* Brent (FRED/EIA) + Tankstellen-Tagesmittel DE. */}}
-{{- if and .Values.ingest.daily.enabled .Values.tankerkoenig.enabled }}
+{{/* Brent (FRED/EIA) + optional die Tankstellen-Tagesmittel DE.
+
+     tankerkoenig.enabled steuert nur die Tankstellen-Abfrage, nicht den
+     CronJob selbst: ohne Key soll Brent weiterlaufen, sonst blieben die
+     Rohoelpreise stehen, nur weil keine Tagesdaten gewollt sind. */}}
+{{- if .Values.ingest.daily.enabled }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -46,8 +50,12 @@ spec:
                 - python
                 - -m
                 - ingest.run_daily
+                {{- if .Values.tankerkoenig.enabled }}
                 - --max-requests
                 - {{ .Values.tankerkoenig.maxRequests | quote }}
+                {{- else }}
+                - --skip-pump
+                {{- end }}
               env:
                 {{- include "fuel-prices.ingestEnv" . | nindent 16 }}
               resources:
