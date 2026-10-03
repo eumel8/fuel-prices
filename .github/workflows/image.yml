@@ -1,12 +1,13 @@
 name: image
 
 # Baut das Image und schiebt es in die GHCR-Registry. Nur auf main und Tags,
-# damit Feature-Branches keine Images erzeugen.
+# damit Feature-Branches keine Images erzeugen. Jeder Tag baut ein Image -
+# auch ein Tag, der kein Semver ist (z.B. "nightly"), bekommt eins.
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["**"]
   workflow_dispatch:
 
 env:
@@ -26,19 +27,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Das Chart zeigt per Default auf .Chart.AppVersion. Damit dieser Tag
+      # nach jedem Build existiert, wird er hier aus Chart.yaml gelesen und
+      # zusaetzlich zu den Semver-Tags gepusht.
+      - name: AppVersion aus Chart.yaml lesen
+        id: chart
+        run: |
+          version=$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}\s*$/\1/p' charts/fuel-prices/Chart.yaml | head -1)
+          if [ -z "$version" ]; then
+            echo "::error::appVersion nicht in charts/fuel-prices/Chart.yaml gefunden"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Image-Tag fuer Chart-Default: $version"
+
       - name: Metadaten
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Tag-Liste pro Ausloeser:
+          #   main                  -> 1.0.0 (appVersion), <sha>, latest
+          #   v1.2.3                 -> 1.0.0, 1.2.3, 1.2, v1.2.3, <sha>, latest
+          #   nightly (kein Semver) -> 1.0.0, nightly, <sha>, latest
+          # type=ref,event=tag sorgt dafuer, dass jeder Tag einen Image-Tag
+          # bekommt; die Semver-Muster greifen nur bei vX.Y.Z.
           tags: |
+            type=raw,value=${{ steps.chart.outputs.version }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=tag
             type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
           labels: |
             org.opencontainers.image.title=fuel-prices
             org.opencontainers.image.description=Kraftstoff- und Rohoelpreise DE/PL
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
 
       - uses: docker/setup-buildx-action@v3

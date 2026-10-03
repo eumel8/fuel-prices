@@ -15,6 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY ingest ./ingest
 COPY web ./web
+# Lizenz im Image ablegen, damit sie ohne Repo-Zugriff auffindbar ist.
+COPY LICENSE ./LICENSE
 
 # Datenverzeichnis anlegen und an nichtprivilegierte UID uebergeben.
 RUN mkdir -p /data && \

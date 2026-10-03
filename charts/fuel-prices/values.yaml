@@ -5,7 +5,8 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/example/fuel-prices
+  # Wird vom image-Workflow nach ghcr.io/eumel8/fuel-prices gepusht.
+  repository: ghcr.io/eumel8/fuel-prices
   tag: ""            # leer = .Chart.AppVersion
   pullPolicy: IfNotPresent
 imagePullSecrets: []
@@ -37,6 +38,8 @@ ingress:
   enabled: false
   className: nginx
   annotations: {}
+  # Platzhalter: vor ingress.enabled=true auf die eigene Domain setzen,
+  # sonst passt der Host nicht zum Zertifikat.
   hosts:
     - host: fuel-prices.example.com
       paths:

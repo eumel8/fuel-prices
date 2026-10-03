@@ -1,10 +1,13 @@
 # fuel-prices
 
-![ci](https://github.com/OWNER/fuel-prices/actions/workflows/ci.yml/badge.svg)
-![image](https://github.com/OWNER/fuel-prices/actions/workflows/image.yml/badge.svg)
+![ci](https://github.com/eumel8/fuel-prices/actions/workflows/ci.yml/badge.svg)
+![image](https://github.com/eumel8/fuel-prices/actions/workflows/image.yml/badge.svg)
 
 Webseite mit Diagrammen für Rohöl-, Benzin- und Dieselpreise in Deutschland und
 Polen. FastAPI + SQLite + Chart.js, Datenimport über CLI oder Kubernetes-CronJobs.
+
+Repository: <https://github.com/eumel8/fuel-prices>
+Image: `ghcr.io/eumel8/fuel-prices`
 
 | Land | Inhalt | Granularität | Quelle |
 | --- | --- | --- | --- |
@@ -66,10 +69,10 @@ begrenzt das für Tests.
 ## Docker
 
 ```bash
-docker build -t ghcr.io/<user>/fuel-prices:1.0.0 .
+docker build -t ghcr.io/eumel8/fuel-prices:1.0.0 .
 docker run --rm -p 8000:8000 -v fuel-data:/data \
   -e TANKERKOENIG_API_KEY=<key> \
-  ghcr.io/<user>/fuel-prices:1.0.0
+  ghcr.io/eumel8/fuel-prices:1.0.0
 ```
 
 Image läuft als UID 10001, Root-Dateisystem ist im Cluster read-only, `/data`
@@ -77,14 +80,14 @@ ist der einzige beschreibbare Pfad. Erstbefüllung:
 
 ```bash
 docker run --rm -v fuel-data:/data --entrypoint sh \
-  ghcr.io/<user>/fuel-prices:1.0.0 -c 'python -m ingest.run_weekly --force-download'
+  ghcr.io/eumel8/fuel-prices:1.0.0 -c 'python -m ingest.run_weekly --force-download'
 ```
 
 ## Kubernetes (Helm)
 
 ```bash
 # 1. Secret fuer die Web-API (optional, aber empfohlen)
-htpasswd -c auth <user> && kubectl create secret generic fuel-prices-auth --from-file=auth
+htpasswd -c auth kloeker && kubectl create secret generic fuel-prices-auth --from-file=auth
 
 # 2. Tankerkönig-Key extern halten
 kubectl create secret generic fuel-prices-tankerkoenig \
@@ -92,11 +95,11 @@ kubectl create secret generic fuel-prices-tankerkoenig \
 
 # 3. Installieren
 helm install fuel-prices ./charts/fuel-prices \
-  --set image.repository=ghcr.io/<user>/fuel-prices \
+  --set image.repository=ghcr.io/eumel8/fuel-prices \
   --set image.tag=1.0.0 \
   --set auth.enabled=true --set auth.existingSecret=fuel-prices-auth \
   --set tankerkoenig.existingSecret=fuel-prices-tankerkoenig \
-  --set ingress.enabled=true --set ingress.hosts[0].host=fuel.example.com
+  --set ingress.enabled=true --set ingress.hosts[0].host=<deine-domain>
 
 # 4. Historie einmalig nachladen
 helm upgrade fuel-prices ./charts/fuel-prices --reuse-values \
@@ -110,6 +113,44 @@ helm upgrade fuel-prices ./charts/fuel-prices --reuse-values \
 Erzeugte Ressourcen: Deployment (1 Replica, `Recreate`), Service, optionaler
 Ingress, PVC (1 Gi), ServiceAccount, CronJob `ingest-daily` (06:17 MEZ),
 CronJob `ingest-weekly` (Mi 10:23 MEZ), optionaler Secret und Bootstrap-Job.
+
+### Image-Tag und Chart-Version
+
+`image.tag` ist leer und fällt auf `appVersion` aus `charts/fuel-prices/Chart.yaml`
+zurück (aktuell `1.0.0`). Damit dieser Tag in der Registry existiert, pusht der
+Workflow `image.yml` die `appVersion` bei **jedem** Build – auch ohne Git-Tag.
+Nach einem Release wird beides erhöht:
+
+```bash
+# 1. Version im Chart
+sed -i 's/^appVersion:.*/appVersion: "1.1.0"/' charts/fuel-prices/Chart.yaml
+# 2. Tag setzen -> erzeugt zusätzlich 1.1.0 und 1.1
+git tag v1.1.0 && git push --tags
+```
+
+So zeigt ein frisches `helm install` nie ins Leere. Wer den SHA statt des
+Versionstags fahren will, überschreibt `image.tag`.
+
+### Welche Image-Tags entstehen
+
+| Auslöser | Tags im GHCR |
+| --- | --- |
+| Push auf `main` | `1.0.0` (appVersion), `<sha>`, `latest` |
+| Push auf `v1.1.0` | `1.0.0`, `1.1.0`, `1.1`, `v1.1.0`, `<sha>`, `latest` |
+| Push auf `nightly` | `1.0.0`, `nightly`, `<sha>`, `latest` |
+
+Jeder Git-Tag baut ein Image, auch einer ohne Semver – der Tag landet 1:1 als
+Image-Tag in der Registry. `latest` zeigt immer auf den letzten Build aus
+`main` oder einem Tag.
+
+**Wichtig beim Rollout:** `image.pullPolicy` ist `IfNotPresent`. Ein neues Image
+unter demselben Tag zieht keinen Rollout. Nach einem Build mit gleichem Tag:
+
+```bash
+kubectl rollout restart deploy/fuel-prices -n <namespace>
+```
+
+Wer das umgehen will, fährt `image.tag` auf den SHA und `pullPolicy: Always`.
 
 ### Wichtige Eckpunkte
 
@@ -197,9 +238,9 @@ Details:
   die Seite erreichbar, Auth-Pfade 401/200/401.
 
 Kein Push aus dem CI-Job. Der Image-Workflow nutzt `GITHUB_TOKEN` mit
-`packages: write`; das genügt für `ghcr.io/<owner>/<repo>` ohne zusätzliches
-Secret. Für Tags entstehen `1.2.3`, `1.2`, `<sha>` und auf `main` zusätzlich
-`latest`.
+`packages: write`; das genügt für `ghcr.io/eumel8/fuel-prices` ohne zusätzliches
+Secret. Welche Tags ein Build erzeugt, steht in
+[Image-Tag und Chart-Version](#image-tag-und-chart-version).
 
 Lokal lässt sich das mit [actionlint](https://github.com/rhysd/actionlint)
 prüfen:
@@ -207,6 +248,12 @@ prüfen:
 ```bash
 actionlint .github/workflows/*.yml
 ```
+
+## Lizenz
+
+Der **Code** steht unter [MIT](LICENSE). Das betrifft nur die Anwendung, nicht
+die Daten: Tankerkönig/MTS-K, EU Weekly Oil Bulletin und FRED/EIA unterliegen
+eigenen Bedingungen, siehe unten.
 
 ## Datenqualität und Rechtliches
 

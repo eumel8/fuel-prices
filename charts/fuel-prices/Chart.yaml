@@ -10,5 +10,9 @@ keywords:
   - petrol
   - diesel
   - brent
+home: https://github.com/eumel8/fuel-prices
+sources:
+  - https://github.com/eumel8/fuel-prices
 maintainers:
-  - name: fuel-prices
+  - name: eumel8
+    url: https://github.com/eumel8
