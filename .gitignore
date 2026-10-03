@@ -1,0 +1,20 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Daten und Caches: werden zur Laufzeit erzeugt bzw. vom Netz geladen.
+data/
+*.db
+*.db-wal
+*.db-shm
+*.xlsx
+
+.env
+.DS_Store
+
+# Node nur fuer den Frontend-Test
+node_modules/

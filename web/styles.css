@@ -1,0 +1,55 @@
+:root {
+  --bg: #0f1720;
+  --panel: #16212c;
+  --panel-2: #1d2a37;
+  --fg: #e8eef5;
+  --muted: #93a4b5;
+  --de: #f0a020;
+  --pl: #4aa8d8;
+  --eu: #7f8fa0;
+  --oil: #c060d0;
+  --line: #27384a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 24px 20px 48px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header h1 { margin: 0 0 4px; font-size: 24px; }
+header .sub { margin: 0 0 20px; color: var(--muted); }
+
+.controls {
+  display: flex; flex-wrap: wrap; gap: 16px; align-items: end;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; margin-bottom: 18px;
+}
+.controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.controls label.check { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 6px; }
+select {
+  background: var(--panel-2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 10px; font-size: 14px;
+}
+.status { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+.cards { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; }
+.card {
+  flex: 1 1 190px; background: var(--panel); border: 1px solid var(--line);
+  border-left-width: 4px; border-radius: 10px; padding: 12px 14px;
+}
+.card .k { font-size: 12px; color: var(--muted); }
+.card .v { font-size: 22px; font-weight: 600; margin: 2px 0; }
+.card .m { font-size: 12px; color: var(--muted); }
+.card .up { color: #ef6461; } .card .down { color: #46c08a; }
+
+.chartbox { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.chartbox canvas { max-height: 460px; }
+
+.notes { margin-top: 24px; color: var(--muted); font-size: 13px; }
+.notes h2 { font-size: 14px; color: var(--fg); margin: 0 0 8px; }
+.notes ul { margin: 0 0 10px; padding-left: 20px; }
+.notes li { margin-bottom: 3px; }
+.foot { border-top: 1px solid var(--line); padding-top: 10px; font-size: 12px; }
+.err { color: #ef6461; }

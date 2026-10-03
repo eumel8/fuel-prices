@@ -1,0 +1,52 @@
+fuel-prices {{ .Chart.AppVersion }} ist installiert ({{ .Release.Name }}, Namespace {{ .Release.Namespace }}).
+
+Datenzugriff:
+{{- if .Values.ingress.enabled }}
+  Webseite:  {{ (first .Values.ingress.hosts).host }}
+{{- else }}
+  Port-Forward zum Testen:
+    kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "fuel-prices.fullname" . }} 8080:{{ .Values.service.port }}
+    -> http://127.0.0.1:8080
+{{- end }}
+
+Status pruefen:
+  kubectl --namespace {{ .Release.Namespace }} get pods,svc,pvc,cronjob,jobs -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl --namespace {{ .Release.Namespace }} logs -l app.kubernetes.io/component=web -f
+  kubectl --namespace {{ .Release.Namespace }} logs -l app.kubernetes.io/component=ingest-daily --tail=50
+
+{{ if not .Values.ingest.bootstrap.enabled -}}
+ACHTUNG: Die Datenbank ist leer. Einmalig die Historie laden:
+  helm upgrade {{ .Release.Name }} . --namespace {{ .Release.Namespace }} --reuse-values \
+    --set ingest.bootstrap.enabled=true
+Danach das Bootstrap-Job wieder loeschen:
+  kubectl --namespace {{ .Release.Namespace }} delete job {{ include "fuel-prices.fullname" . }}-bootstrap
+{{- else -}}
+Bootstrap-Job laeuft: {{ include "fuel-prices.fullname" . }}-bootstrap
+Nach erfolgreichem Abschluss das Job loeschen und ingest.bootstrap.enabled=false setzen.
+{{- end }}
+{{- if .Values.tankerkoenig.existingSecret }}
+
+Tankerkönig-Key wird aus dem Secret {{ .Values.tankerkoenig.existingSecret }} gelesen
+(Schlüssel {{ .Values.tankerkoenig.existingSecretKey }}).
+{{- else if .Values.tankerkoenig.apiKey }}
+
+Tankerkönig-Key ist im Release-Secret {{ include "fuel-prices.fullname" . }}-tankerkoenig
+gespeichert. Besser: Key extern halten und tankerkoenig.existingSecret setzen.
+{{- else }}
+
+WARNUNG: Kein eigener Tankerkönig-Key gesetzt. Es laeuft der offizielle Demo-Key,
+der ausschliesslich Tankstellen im Raum Berlin liefert - die DE-Tageslinie
+entspricht damit nicht dem Bundesdurchschnitt. Key (kostenlos) eintragen:
+  kubectl --namespace {{ .Release.Namespace }} create secret generic {{ include "fuel-prices.fullname" . }}-tankerkoenig \
+    --from-literal={{ .Values.tankerkoenig.existingSecretKey }}=<KEY>
+  helm upgrade {{ .Release.Name }} . --namespace {{ .Release.Namespace }} --reuse-values \
+    --set tankerkoenig.apiKey=<KEY>
+{{- end }}
+{{- if not .Values.auth.enabled }}
+
+HINWEIS: Ohne auth.enabled ist /api/series und /api/latest ungeschuetzt erreichbar.
+Schuetzen mit einem htpasswd-Secret:
+  htpasswd -c auth <user> && kubectl --namespace {{ .Release.Namespace }} create secret generic {{ .Release.Namespace }}-auth --from-file=auth
+  helm upgrade {{ .Release.Name }} . --namespace {{ .Release.Namespace }} --reuse-values \
+    --set auth.enabled=true --set auth.existingSecret={{ .Release.Namespace }}-auth
+{{- end }}

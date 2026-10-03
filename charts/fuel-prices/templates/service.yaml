@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fuel-prices.fullname" . }}
+  labels:
+    {{- include "fuel-prices.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "fuel-prices.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "fuel-prices.pvcName" . }}
+  labels:
+    {{- include "fuel-prices.labels" . | nindent 4 }}
+  {{- with .Values.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+  {{- if .Values.persistence.storageClass }}
+  {{- if eq .Values.persistence.storageClass "-" }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  {{- end }}
+---
+{{- end }}
+{{/* Nur anlegen, wenn create=true UND kein eigener Name gesetzt ist.
+     Klammern noetig: "and a b | not" waere "not (and a b)". */}}
+{{- if and .Values.serviceAccount.create (not .Values.serviceAccount.name) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "fuel-prices.serviceAccountName" . }}
+  labels:
+    {{- include "fuel-prices.labels" . | nindent 4 }}
+  {{- with .Values.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- if and .Values.tankerkoenig.apiKey (not .Values.tankerkoenig.existingSecret) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "fuel-prices.fullname" . }}-tankerkoenig
+  labels:
+    {{- include "fuel-prices.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  {{ .Values.tankerkoenig.existingSecretKey }}: {{ .Values.tankerkoenig.apiKey | quote }}
+{{- end }}

@@ -1,0 +1,81 @@
+suite: ingress
+templates:
+  - ingress.yaml
+tests:
+  - it: erzeugt keinen Ingress, wenn deaktiviert
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: routet Host und Pfad auf den Service
+    set:
+      ingress:
+        enabled: true
+        className: nginx
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Ingress
+      - equal:
+          path: spec.ingressClassName
+          value: nginx
+      - equal:
+          path: spec.rules[0].host
+          value: fuel-prices.example.com
+      - equal:
+          path: spec.rules[0].http.paths[0].path
+          value: /
+      - equal:
+          path: spec.rules[0].http.paths[0].pathType
+          value: Prefix
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.name
+          value: RELEASE-NAME-fuel-prices
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.number
+          value: 80
+
+  - it: uebernimmt einen eigenen Host
+    set:
+      ingress:
+        enabled: true
+        hosts:
+          - host: preise.example.org
+            paths:
+              - path: /diagramm
+                pathType: Exact
+    asserts:
+      - equal:
+          path: spec.rules[0].host
+          value: preise.example.org
+      - equal:
+          path: spec.rules[0].http.paths[0].path
+          value: /diagramm
+      - equal:
+          path: spec.rules[0].http.paths[0].pathType
+          value: Exact
+
+  - it: setzt TLS nur, wenn konfiguriert
+    set:
+      ingress:
+        enabled: true
+        tls:
+          - secretName: fuel-prices-tls
+            hosts:
+              - fuel-prices.example.com
+    asserts:
+      - equal:
+          path: spec.tls[0].secretName
+          value: fuel-prices-tls
+      - equal:
+          path: spec.tls[0].hosts[0]
+          value: fuel-prices.example.com
+
+  - it: laesst TLS weg, wenn nicht konfiguriert
+    set:
+      ingress:
+        enabled: true
+    asserts:
+      - isNull:
+          path: spec.tls

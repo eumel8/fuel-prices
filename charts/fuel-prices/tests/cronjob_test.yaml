@@ -1,0 +1,165 @@
+suite: cronjob
+templates:
+  - cronjob.yaml
+tests:
+  - it: erzeugt beide CronJobs
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: fragt taeglich Brent und Tankstellen ab
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-daily
+    asserts:
+      - isKind:
+          of: CronJob
+      - equal:
+          path: spec.schedule
+          value: 17 6 * * *
+      - equal:
+          path: spec.timeZone
+          value: Europe/Berlin
+      - equal:
+          path: spec.concurrencyPolicy
+          value: Forbid
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[0]
+          value: python
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[1]
+          value: -m
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[2]
+          value: ingest.run_daily
+
+  - it: begrenzt die Rasterabfragen ueber maxRequests
+    set:
+      tankerkoenig:
+        maxRequests: 8
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-daily
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[3]
+          value: --max-requests
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[4]
+          value: "8"
+
+  - it: laedt das Wochenbulletin mit --force-download
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-weekly
+    asserts:
+      - equal:
+          path: spec.schedule
+          value: 23 10 * * 3
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[2]
+          value: ingest.run_weekly
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[3]
+          value: --force-download
+
+  - it: teilt sich mit dem Deployment den PVC
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-weekly
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.volumes[1].persistentVolumeClaim.claimName
+          value: RELEASE-NAME-fuel-prices-data
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /data
+
+  - it: setzt FUEL_DB_PATH auf den PVC
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-daily
+    asserts:
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: FUEL_DB_PATH
+            value: /data/fuel.db
+
+  - it: injiziert den Tankerkönig-Key auch in die Jobs
+    set:
+      tankerkoenig:
+        existingSecret: mein-geheim
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-daily
+    asserts:
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: TANKERKOENIG_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: mein-geheim
+                key: tankerkoenigApiKey
+                optional: true
+
+  - it: laeuft ohne Root
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-daily
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.securityContext.runAsUser
+          value: 10001
+
+  - it: laeuft Jobs nicht als root trotz restartPolicy
+    documentSelector:
+      path: metadata.name
+      value: RELEASE-NAME-fuel-prices-ingest-weekly
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.restartPolicy
+          value: OnFailure
+
+  - it: entfaellt, wenn tankerkoenig deaktiviert ist
+    set:
+      tankerkoenig:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: laesst sich der Daily-Job abschalten
+    set:
+      ingest:
+        daily:
+          enabled: false
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: laesst sich der Weekly-Job abschalten
+    set:
+      ingest:
+        weekly:
+          enabled: false
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: erzeugt ohne Jobs nur ein leeres Dokument
+    set:
+      ingest:
+        daily:
+          enabled: false
+        weekly:
+          enabled: false
+      tankerkoenig:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

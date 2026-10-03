@@ -1,0 +1,24 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["venv", "data", "node_modules"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "W",    # warnings
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+]
+ignore = [
+    # Importe stehen nach dem Docstring; ruff raeumt das nicht auf.
+    "E402",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests importieren nach dem Setzen der Umgebungsvariablen.
+"tests/*" = ["E402", "B011"]

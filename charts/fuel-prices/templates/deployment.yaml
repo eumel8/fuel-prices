@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fuel-prices.fullname" . }}
+  labels:
+    {{- include "fuel-prices.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  # SQLite: genau ein Schreiber auf dem PVC.
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "fuel-prices.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "fuel-prices.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+        {{- with .Values.web.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.web.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "fuel-prices.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Legt das Schema an, falls der PVC frisch ist. Idempotent.
+      initContainers:
+        - name: init-db
+          image: {{ include "fuel-prices.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-c", "from app import db; db.init_db(); print('schema ok')"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 14 }}
+          env:
+            - name: FUEL_DATA_DIR
+              value: /data
+            - name: FUEL_DB_PATH
+              value: /data/fuel.db
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: web
+          image: {{ include "fuel-prices.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.web.port }}
+          env:
+            - name: FUEL_DATA_DIR
+              value: /data
+            - name: FUEL_DB_PATH
+              value: /data/fuel.db
+            {{- $tk := include "fuel-prices.tankerkoenigSecretName" . }}
+            {{- if $tk }}
+            - name: TANKERKOENIG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $tk }}
+                  key: {{ .Values.tankerkoenig.existingSecretKey }}
+                  optional: true
+            {{- end }}
+            {{- $secret := include "fuel-prices.authSecretName" . }}
+            {{- if $secret }}
+            - name: FUEL_AUTH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: user
+            - name: FUEL_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: password
+            - name: FUEL_AUTH_REALM
+              value: {{ .Values.auth.realm | quote }}
+            {{- end }}
+          {{- if .Values.loki.enabled }}
+        # Sidecar: leitet die Container-Logs an Loki weiter.
+        - name: loki-push
+          image: grafana/nats-log-lgi:v0.6.2
+          args:
+            - "-addr={{ .Values.loki.url }}"
+            - "-worker=1"
+            - "-label=job={{ include "fuel-prices.fullname" . }},app=fuel-prices"
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+{{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "fuel-prices.pvcName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

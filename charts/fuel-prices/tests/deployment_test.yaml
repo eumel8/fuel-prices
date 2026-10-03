@@ -1,0 +1,181 @@
+suite: deployment
+templates:
+  - deployment.yaml
+tests:
+  - it: erzeugt genau ein Deployment
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Deployment
+
+  - it: haelt genau eine Replica, weil SQLite keinen Mehrfach-Writer erlaubt
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+
+  - it: bindet den Daten-PVC nach /data
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: data
+            mountPath: /data
+      - equal:
+          path: spec.template.spec.volumes[1].persistentVolumeClaim.claimName
+          value: RELEASE-NAME-fuel-prices-data
+
+  - it: nutzt ein bestehendes PVC, wenn persistence.existingClaim gesetzt ist
+    set:
+      persistence:
+        existingClaim: meine-daten
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[1].persistentVolumeClaim.claimName
+          value: meine-daten
+
+  - it: legt das Schema per initContainer an
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: init-db
+      - equal:
+          path: spec.template.spec.initContainers[0].command[0]
+          value: python
+      - equal:
+          path: spec.template.spec.initContainers[0].command[1]
+          value: -c
+      - equal:
+          path: spec.template.spec.initContainers[0].command[2]
+          value: from app import db; db.init_db(); print('schema ok')
+
+  - it: setzt FUEL_DB_PATH auf den PVC
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: FUEL_DB_PATH
+            value: /data/fuel.db
+
+  - it: laeuft ohne Root und mit read-only Root-Dateisystem
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 10001
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+
+  - it: hat Probes auf /healthz
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: http
+
+  - it: injiziert den Tankerkönig-Key aus einem bestehenden Secret
+    set:
+      tankerkoenig:
+        existingSecret: mein-geheim
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TANKERKOENIG_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: mein-geheim
+                key: tankerkoenigApiKey
+                optional: true
+
+  - it: injiziert Auth-User und -Passwort aus dem Secret
+    set:
+      auth:
+        enabled: true
+        existingSecret: fp-auth
+        realm: Meine Prices
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: FUEL_AUTH_USER
+            valueFrom:
+              secretKeyRef:
+                name: fp-auth
+                key: user
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: FUEL_AUTH_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: fp-auth
+                key: password
+
+  - it: reicht den Auth-Realm durch
+    set:
+      auth:
+        enabled: true
+        existingSecret: fp-auth
+        realm: Meine Prices
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: FUEL_AUTH_REALM
+            value: Meine Prices
+
+  - it: setzt keine Auth-Variablen, wenn auth deaktiviert ist
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: FUEL_AUTH_USER
+            valueFrom:
+              secretKeyRef:
+                name: fp-auth
+                key: user
+
+  - it: hat ohne loki genau einen Container
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 1
+
+  - it: fuegt mit loki den Sidecar hinzu
+    set:
+      loki:
+        enabled: true
+        url: http://loki:3100
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 2
+      - equal:
+          path: spec.template.spec.containers[1].name
+          value: loki-push
+      - equal:
+          path: spec.template.spec.containers[1].args[0]
+          value: -addr=http://loki:3100
+      - equal:
+          path: spec.template.spec.containers[1].args[1]
+          value: -worker=1
+      - equal:
+          path: spec.template.spec.containers[1].args[2]
+          value: -label=job=RELEASE-NAME-fuel-prices,app=fuel-prices

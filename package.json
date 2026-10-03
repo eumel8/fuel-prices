@@ -1,0 +1,12 @@
+{
+  "name": "fuel-prices-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Frontend-Tests fuer web/app.js (headless via jsdom)",
+  "scripts": {
+    "test": "node tests/frontend_check.js"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}

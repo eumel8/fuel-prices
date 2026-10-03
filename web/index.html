@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kraftstoffpreise Deutschland &amp; Polen</title>
+<link rel="stylesheet" href="/static/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>Kraftstoffpreise Deutschland &amp; Polen</h1>
+  <p class="sub">Rohöl, Benzin und Diesel — täglich aktualisiert</p>
+</header>
+
+<section class="controls">
+  <label>Zeitraum
+    <select id="range">
+      <option value="90">3 Monate</option>
+      <option value="365" selected>1 Jahr</option>
+      <option value="1095">3 Jahre</option>
+      <option value="0">Maximal (seit 2005)</option>
+    </select>
+  </label>
+  <label>Spritsorte
+    <select id="fuel">
+      <option value="e5">Benzin E5 / Pb95</option>
+      <option value="diesel">Diesel</option>
+    </select>
+  </label>
+  <label class="check"><input type="checkbox" id="net" disabled> netto-Werte (Polen/EU)</label>
+  <span id="status" class="status">lade Daten…</span>
+</section>
+
+<section class="cards" id="cards"></section>
+
+<section class="chartbox">
+  <canvas id="chart" height="110"></canvas>
+</section>
+
+<section class="notes">
+  <h2>Quellen &amp; Hinweise</h2>
+  <ul id="sources"></ul>
+  <ul id="notes"></ul>
+  <p class="foot">Diese Seite ist ein Verbraucher-Informationsdienst. Die MTS-K-Rohdaten dürfen
+  ausschließlich zur Verbraucherinformation genutzt werden und nicht für die Mineralölwirtschaft.</p>
+</section>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

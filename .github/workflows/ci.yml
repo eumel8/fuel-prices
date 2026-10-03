@@ -1,0 +1,239 @@
+name: ci
+
+# Prueft bei jedem Push und PR: Python-Tests, Helm-Chart, gerenderte
+# Kubernetes-Manifeste, Frontend und Docker-Build. Ohne Registry-Zugang.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  HELM_VERSION: v3.16.3
+  KUBECONFORM_VERSION: v0.6.7
+
+jobs:
+  python:
+    name: Python-Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Abhaengigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Kompilieren
+        run: python -m compileall -q app ingest tests
+
+      - name: ruff
+        run: |
+          pip install ruff==0.8.4
+          ruff check app ingest tests
+
+      - name: unittest
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Coverage
+        run: |
+          pip install coverage==7.6.10
+          coverage run -m unittest discover -s tests -p "test_*.py"
+          coverage report --include="app/*,ingest/*"
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Abhaengigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          npm ci
+
+      - name: Server mit Testdaten starten
+        run: |
+          # Wochenhistorie aus dem EU-Bulletin, Rohöl aus FRED: beide stabil.
+          python -m ingest.run_weekly --force-download
+          python -m ingest.run_daily --skip-brent
+          # Tankerkönig nur mit 2 Rasterpunkten: der Lauf soll den Weg
+          # pruefen, nicht die Schnittstelle belasten. Ohne eigenes Secret
+          # greift der Demo-Key (nur Berlin).
+          python -m ingest.run_daily --skip-brent --max-requests 2 \
+            || echo "::warning::Tankerkönig nicht erreichbar, DE-Tagesdaten fehlen"
+          nohup python -m uvicorn app.main:app --port 8099 > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8099/healthz > /dev/null; then
+              echo "Server bereit"; exit 0
+            fi
+            sleep 1
+          done
+          echo "Server nicht gestartet"; cat server.log; exit 1
+
+      - name: app.js-Syntax
+        run: node --check web/app.js
+
+      - name: Frontend-Logik
+        run: npm test
+        env:
+          PORT: "8099"
+
+      - name: API-Smoke
+        run: |
+          curl -sf http://127.0.0.1:8099/healthz | tee /dev/stderr | grep -q '"status":"ok"'
+          curl -sf http://127.0.0.1:8099/api/latest | python -c "
+          import json,sys
+          d = json.load(sys.stdin)
+          assert d['prices'], 'keine Preise'
+          keys = [(p['country'],p['fuel'],p['basis'],p['granularity']) for p in d['prices']]
+          assert len(keys) == len(set(keys)), 'doppelte Serien in /api/latest'
+          print(f\"{len(d['prices'])} Serien, {len(d['oil'])} Oel-Benchmarks\")
+          "
+          curl -sf "http://127.0.0.1:8099/api/series?from=2026-01-01" > /dev/null
+          code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8099/api/series?from=unsinn")
+          test "$code" = "400" || { echo "erwartet 400, war $code"; exit 1; }
+
+      - name: Index-HTML ohne Auth
+        run: |
+          curl -sf http://127.0.0.1:8099/ | grep -q "Kraftstoffpreise"
+          curl -sf http://127.0.0.1:8099/static/app.js | grep -q "renderChart"
+
+      - name: Server-Log auf Fehler pruefen
+        if: always()
+        run: |
+          test -f server.log || exit 0
+          if grep -iE "traceback|error" server.log; then
+            echo "Server-Log enthaelt Fehler"; exit 1
+          fi
+
+  helm:
+    name: Helm-Chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: helm installieren
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: helm plugin (unittest)
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+
+      - name: kubeconform installieren
+        run: |
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      - name: helm lint
+        run: helm lint charts/fuel-prices --strict
+
+      - name: helm unittest
+        run: helm unittest charts/fuel-prices
+
+      - name: Manifeste rendern
+        run: |
+          set -euo pipefail
+          helm template fuel-prices charts/fuel-prices \
+            --set tankerkoenig.existingSecret=tk \
+            --set auth.enabled=true --set auth.existingSecret=auth \
+            --set ingress.enabled=true \
+            --set ingest.bootstrap.enabled=true \
+            --set loki.enabled=true \
+            > rendered.yaml
+          grep -c "^kind:" rendered.yaml
+
+      - name: kubeconform strict
+        run: kubeconform -strict -summary -kubernetes-version 1.31.0 rendered.yaml
+
+      - name: Default-Render pruefen
+        run: |
+          helm template fuel-prices charts/fuel-prices > default.yaml
+          kubeconform -strict -summary -kubernetes-version 1.31.0 default.yaml
+
+      - name: SQLite-Invarianten
+        run: |
+          set -euo pipefail
+          yq_output=$(helm template fuel-prices charts/fuel-prices -s templates/deployment.yaml)
+          echo "$yq_output" | grep -q "replicas: 1" || { echo "replicas != 1"; exit 1; }
+          echo "$yq_output" | grep -q "type: Recreate" || { echo "Recreate fehlt"; exit 1; }
+          echo "$yq_output" | grep -q "runAsNonRoot: true" || { echo "runAsNonRoot fehlt"; exit 1; }
+
+  docker:
+    name: Docker-Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Image bauen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: fuel-prices:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image smoke-testen
+        run: |
+          set -euo pipefail
+          # UID 10001, kein root
+          uid=$(docker run --rm --entrypoint sh fuel-prices:ci -c 'id -u')
+          test "$uid" = "10001" || { echo "laeuft als UID $uid, erwartet 10001"; exit 1; }
+
+          docker run -d --name web -p 8000:8000 fuel-prices:ci
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/healthz > /dev/null && break
+            sleep 1
+          done
+
+          curl -sf http://127.0.0.1:8000/healthz | grep -q '"status":"ok"'
+          curl -sf http://127.0.0.1:8000/ | grep -q "Kraftstoffpreise"
+          curl -sf http://127.0.0.1:8000/static/app.js | grep -q "renderChart"
+
+          docker rm -f web
+
+      - name: Auth im Image pruefen
+        run: |
+          set -euo pipefail
+          docker run -d --name auth -p 8001:8000 \
+            -e FUEL_AUTH_USER=admin -e FUEL_AUTH_PASSWORD=geheim fuel-prices:ci
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null http://127.0.0.1:8001/healthz && break
+            sleep 1
+          done
+          # /healthz bleibt offen, die Seite nicht.
+          curl -sf -o /dev/null http://127.0.0.1:8001/healthz
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -u admin:geheim http://127.0.0.1:8001/)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -u admin:falsch http://127.0.0.1:8001/)" = "401"
+          docker rm -f auth

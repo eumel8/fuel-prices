@@ -1,0 +1,10 @@
+apiVersion: v2
+name: fuel-prices
+description: Testsuite fuer das fuel-prices Chart
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+dependencies:
+  - name: helm-unittest
+    repository: https://helm-unittest.github.io/helm-unittest
+    version: 0.7.1

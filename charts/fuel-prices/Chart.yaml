@@ -1,0 +1,14 @@
+apiVersion: v2
+name: fuel-prices
+description: Diagrammdienst für Rohöl-, Benzin- und Dieselpreise in Deutschland und Polen
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - fuel
+  - prices
+  - petrol
+  - diesel
+  - brent
+maintainers:
+  - name: fuel-prices

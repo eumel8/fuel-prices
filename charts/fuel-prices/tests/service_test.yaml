@@ -1,0 +1,126 @@
+suite: service
+templates:
+  - service.yaml
+tests:
+  - it: erzeugt genau drei Ressourcen
+    asserts:
+      - hasDocuments:
+          count: 3
+
+  - it: erzeugt einen Service auf Port http
+    documentSelector:
+      path: kind
+      value: Service
+    asserts:
+      - equal:
+          path: spec.ports[0].targetPort
+          value: http
+      - equal:
+          path: spec.ports[0].port
+          value: 80
+      - equal:
+          path: spec.type
+          value: ClusterIP
+      - equal:
+          path: spec.selector["app.kubernetes.io/component"]
+          value: web
+
+  - it: nimmt den persistenten VolumeClaim mit
+    documentSelector:
+      path: kind
+      value: PersistentVolumeClaim
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-fuel-prices-data
+      - equal:
+          path: spec.accessModes[0]
+          value: ReadWriteOnce
+      - equal:
+          path: spec.resources.requests.storage
+          value: 1Gi
+
+  - it: setzt die gewaehlte StorageClass
+    set:
+      persistence:
+        storageClass: fast-ssd
+    documentSelector:
+      path: kind
+      value: PersistentVolumeClaim
+    asserts:
+      - equal:
+          path: spec.storageClassName
+          value: fast-ssd
+
+  - it: leert die StorageClass, wenn sie auf - steht
+    set:
+      persistence:
+        storageClass: "-"
+    documentSelector:
+      path: kind
+      value: PersistentVolumeClaim
+    asserts:
+      - equal:
+          path: spec.storageClassName
+          value: ""
+
+  - it: legt bei persistence.enabled=false kein PVC an
+    set:
+      persistence:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: legt bei existingClaim kein eigenes PVC an
+    set:
+      persistence:
+        existingClaim: meine-daten
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: erzeugt ohne Key kein Secret
+    asserts:
+      - hasDocuments:
+          count: 3
+
+  - it: erzeugt das Secret aus tankerkoenig.apiKey
+    set:
+      tankerkoenig:
+        apiKey: geheimer-key
+    documentSelector:
+      path: kind
+      value: Secret
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-fuel-prices-tankerkoenig
+      - equal:
+          path: stringData.tankerkoenigApiKey
+          value: geheimer-key
+
+  - it: erzeugt kein eigenes Secret, wenn existingSecret gesetzt ist
+    set:
+      tankerkoenig:
+        apiKey: geheimer-key
+        existingSecret: mein-geheim
+    asserts:
+      - hasDocuments:
+          count: 3
+
+  - it: legt keinen ServiceAccount an, wenn create=false
+    set:
+      serviceAccount:
+        create: false
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: legt keinen ServiceAccount an, wenn ein eigener Name gesetzt ist
+    set:
+      serviceAccount:
+        name: mein-sa
+    asserts:
+      - hasDocuments:
+          count: 2

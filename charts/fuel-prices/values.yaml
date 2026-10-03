@@ -1,0 +1,150 @@
+# Default-Werte fuer fuel-prices.
+# SQLite liegt auf einem PVC, deshalb bewusst nur eine Replica und
+# Recreate-Strategie: zwei Schreiber auf dieselbe Datei waere unsicher.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/example/fuel-prices
+  tag: ""            # leer = .Chart.AppVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+web:
+  port: 8000
+  # Resources fuer den FastAPI-Prozess.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  extraArgs: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podLabels: {}
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: fuel-prices.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# SQLite-Datei. Bei ReadWriteOnce muss Web-Pod und CronJob auf dem
+# selben Node landen -> nodeSelector/affinity bei Bedarf setzen.
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  annotations: {}
+
+# API-Key fuer Tankerkönig. Ohne eigenen Key liefert die API nur den
+# Demo-Key, der ausschliesslich Berlin abdeckt.
+# Bevorzugt: bestehendes Secret setzen und apiKey leer lassen, dann liegt
+# der Key nicht im Release-Manifest.
+tankerkoenig:
+  existingSecret: ""
+  existingSecretKey: tankerkoenigApiKey
+  # Nur setzen, wenn KEIN bestehendes Secret verwendet wird. Nicht in values.yaml committen!
+  apiKey: ""
+  # Rasterpunkte je Lauf (56 = volles Bundesgebiet). Reduzieren senkt die Last.
+  maxRequests: 56
+  enabled: true
+
+ingest:
+  # Brent (FRED/EIA) + Tankstellen-Tagesmittel fuer Deutschland.
+  daily:
+    enabled: true
+    schedule: "17 6 * * *"
+    timeZone: Europe/Berlin
+    backoffLimit: 3
+  # EU Weekly Oil Bulletin: Wochenmittel DE/PL/EU, Historie ab 2005.
+  weekly:
+    enabled: true
+    schedule: "23 10 * * 3"   # mittwochs
+    timeZone: Europe/Berlin
+    backoffLimit: 2
+  # Einmaliger Job, der die Historie laedt. Nach erfolgreichem Lauf
+  # auf enabled=false setzen oder als abgeschlossen markieren.
+  bootstrap:
+    enabled: false
+    backoffLimit: 4
+    activeDeadlineSeconds: 3600
+
+cronjob:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# HTTP-Basic-Auth vor der Seite. Ohne das ist die Web-API oeffentlich.
+# auth.existingSecret muss die Schluessel user und password enthalten.
+auth:
+  enabled: false
+  existingSecret: ""
+  realm: "fuel-prices"
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 10
+
+# Stellt Logs der Ingest-Jobs in einen Log-Store (z.B. Grafana Loki).
+# Leer lassen deaktiviert.
+loki:
+  enabled: false
+  url: http://loki.monitoring.svc:3100
+
+commonLabels: {}
+commonAnnotations: {}

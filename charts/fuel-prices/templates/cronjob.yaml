@@ -1,0 +1,240 @@
+{{- $fullName := include "fuel-prices.fullname" . -}}
+{{- $secretName := printf "%s-tankerkoenig" $fullName -}}
+
+{{/* Brent (FRED/EIA) + Tankstellen-Tagesmittel DE. */}}
+{{- if and .Values.ingest.daily.enabled .Values.tankerkoenig.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullName }}-ingest-daily
+  labels:
+    {{- include "fuel-prices.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingest-daily
+spec:
+  schedule: {{ .Values.ingest.daily.schedule | quote }}
+  timeZone: {{ .Values.ingest.daily.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 1800
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.ingest.daily.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "fuel-prices.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: ingest-daily
+          annotations:
+            checksum/config: {{ toYaml .Values.tankerkoenig | sha256sum }}
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "fuel-prices.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: ingest-daily
+              image: {{ include "fuel-prices.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              command:
+                - python
+                - -m
+                - ingest.run_daily
+                - --max-requests
+                - {{ .Values.tankerkoenig.maxRequests | quote }}
+              env:
+                {{- include "fuel-prices.ingestEnv" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.cronjob.resources | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            - name: data
+              {{- if .Values.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "fuel-prices.pvcName" . }}
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+          {{- with .Values.cronjob.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronjob.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronjob.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+
+---
+{{/* EU Weekly Oil Bulletin: Wochenmittel DE/PL/EU, laedt die Historie ab 2005. */}}
+{{- if .Values.ingest.weekly.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullName }}-ingest-weekly
+  labels:
+    {{- include "fuel-prices.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingest-weekly
+spec:
+  schedule: {{ .Values.ingest.weekly.schedule | quote }}
+  timeZone: {{ .Values.ingest.weekly.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.ingest.weekly.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "fuel-prices.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: ingest-weekly
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "fuel-prices.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: ingest-weekly
+              image: {{ include "fuel-prices.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              command:
+                - python
+                - -m
+                - ingest.run_weekly
+                - --force-download
+              env:
+                {{- include "fuel-prices.ingestEnv" . | nindent 16 }}
+              # openpyxl schreibt beim Entpacken nicht, aber grosse Datei braucht Luft.
+              resources:
+                {{- toYaml .Values.cronjob.resources | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            - name: data
+              {{- if .Values.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "fuel-prices.pvcName" . }}
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+          {{- with .Values.cronjob.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronjob.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronjob.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+
+---
+{{/* Einmaliger Bootstrap: Historie 2005..heute und Brent auf den PVC holen. */}}
+{{- if .Values.ingest.bootstrap.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-bootstrap
+  labels:
+    {{- include "fuel-prices.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    # Nach erfolgreichem Lauf manuell loeschen: "kubectl delete job {{ $fullName }}-bootstrap"
+    fuel-prices.io/one-shot: "true"
+spec:
+  backoffLimit: {{ .Values.ingest.bootstrap.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.ingest.bootstrap.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "fuel-prices.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "fuel-prices.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: init-db
+          image: {{ include "fuel-prices.image" . }}
+          command: ["python", "-c", "from app import db; db.init_db(); print('schema ok')"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: FUEL_DATA_DIR
+              value: /data
+            - name: FUEL_DB_PATH
+              value: /data/fuel.db
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: bootstrap
+          image: {{ include "fuel-prices.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo ">> Weekly Oil Bulletin (DE/PL/EU Wochenhistorie ab 2005)"
+              python -m ingest.run_weekly --force-download
+              echo ">> Brent/WTI via FRED"
+              python -m ingest.run_daily --skip-pump
+          env:
+            {{- include "fuel-prices.ingestEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.cronjob.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "fuel-prices.pvcName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}
