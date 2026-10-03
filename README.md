@@ -279,3 +279,22 @@ eigenen Bedingungen, siehe unten.
 - Historie bis 2005 für DE/PL/EU, Brent bis 1987, WTI bis 1986.
 - Vor kommerzieller Veröffentlichung Lizenzbedingungen beider Datenanbieter
   prüfen; dieses Projekt nimmt keine Bewertung der Lizenzlage vor.
+
+## Nachträgliche Cluster-Notizen
+
+Diese Beobachtungen stammen aus einem echten Deployment (Traefik-Ingress,
+Einzelknoten-Cluster) und sind inzwischen im Code abgesichert:
+
+- **FRED antwortet nur auf User-Agents mit Kontakt-URL.** Gemessen:
+  `fuel-prices/1.0` → ReadTimeout nach 60 s, `fuel-prices/1.0` mit
+  `(+https://…)` → HTTP 200 in 0,1 s.
+- **Der WOB-Cache muss auf dem PVC liegen.** Ein fester Pfad unter `/app`
+  scheitert an `readOnlyRootFilesystem: true` – das traf Bootstrap-Job und
+  Wochentask gleichermaßen.
+- **helm-unittest braucht Helm 4.** Das `plugin.yaml` enthält inzwischen
+  `platformHooks`; Helm 3 lehnt das mit „unknown field" ab.
+- **`tankerkoenig.enabled=false` darf Brent nicht einfrieren.** Der
+  Daily-CronJob läuft dann mit `--skip-pump` weiter.
+- **Nach einem Build mit gleichem Tag `rollout restart`.** `IfNotPresent`
+  holt das neue Image nicht. Wer `image.tag: latest` fährt, sollte
+  `image.pullPolicy: Always` setzen.
