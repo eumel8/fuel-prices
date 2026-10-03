@@ -15,7 +15,11 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.12"
-  HELM_VERSION: v3.16.3
+  # Helm 4 ist noetig: helm-unittest schreibt inzwischen "platformHooks" in
+  # plugin.yaml, was Helm 3 mit "unknown field" ablehnt. Mit 3.16.3 scheiterte
+  # der Plugin-Schritt an genau diesem Fehler. Gegenprobe: unter 4.3.0
+  # installiert das Plugin, lint --strict und 44 unittest-Assertions laufen.
+  HELM_VERSION: v4.3.0
   KUBECONFORM_VERSION: v0.6.7
 
 jobs:
@@ -80,7 +84,10 @@ jobs:
         run: |
           # Wochenhistorie aus dem EU-Bulletin, Rohöl aus FRED: beide stabil.
           python -m ingest.run_weekly --force-download
-          python -m ingest.run_daily --skip-brent
+          # Brent/WTI separat, damit ein Ausfall von Tankerkönig den
+          # Rohöl-Check nicht mitnimmt. Ohne --skip-brent hatte der
+          # Frontend-Check "Oel auf y2-Achse" nie Daten.
+          python -m ingest.run_daily --skip-pump
           # Tankerkönig nur mit 2 Rasterpunkten: der Lauf soll den Weg
           # pruefen, nicht die Schnittstelle belasten. Ohne eigenes Secret
           # greift der Demo-Key (nur Berlin).
@@ -143,6 +150,8 @@ jobs:
           version: ${{ env.HELM_VERSION }}
 
       - name: helm plugin (unittest)
+        # --verify=false gibt es erst ab Helm 3.17; unter 4.x ist es noetig,
+        # weil die Pruefsumme sonst gegen die GitHub-Checksum-Datei laeuft.
         run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
 
       - name: kubeconform installieren
