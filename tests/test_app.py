@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # Eigene DB, damit die Tests nie die Datenbank aus data/ anfassen.
 _TMP = tempfile.mkdtemp(prefix="fuel-prices-test-")
@@ -16,7 +17,10 @@ os.environ["FUEL_HTTP_TIMEOUT"] = "1"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import httpx  # noqa: E402
+
 import app.query as query  # noqa: E402
+import ingest.tankerkoenig_de as tk  # noqa: E402
 from app import db  # noqa: E402
 from app.query import build_chart_payload, latest_snapshot  # noqa: E402
 
@@ -35,8 +39,25 @@ def _point(country, fuel, basis, gran, day, value, n=100):
     return (country, fuel, basis, gran, day, value, UNIT, CURRENCY, n)
 
 
+_class_counter = 0
+
+
+def _fresh_db() -> None:
+    """Leere, eigene DB pro Testklasse.
+
+    Sonst leakt UpsertTest (2026-02-01) in die danach laufenden Klassen und
+    latest_snapshot()/coverage sehen Punkte, die ihre Fixtures nicht kennen.
+    """
+    global _class_counter
+    _class_counter += 1
+    db.DB_PATH = Path(_TMP) / f"klasse-{_class_counter}.db"
+    db.DB_PATH.unlink(missing_ok=True)
+    db.init_db()
+
+
 def _seed() -> None:
     """Legt je Serie zwei Wochenpunkte an."""
+    _fresh_db()
     rows = []
     for country, fuel, basis, gran, _ in query.SERIES_SPEC:
         for i, day in enumerate(("2026-01-05", "2026-01-12")):
@@ -54,7 +75,13 @@ def _seed() -> None:
         )
 
 
-class DbSchemaTest(unittest.TestCase):
+class FuelTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        _fresh_db()
+
+
+class DbSchemaTest(FuelTestCase):
     def test_init_db_is_idempotent(self) -> None:
         db.init_db()
         db.init_db()
@@ -73,7 +100,7 @@ class DbSchemaTest(unittest.TestCase):
         self.assertIn("id", cols)
 
 
-class UpsertTest(unittest.TestCase):
+class UpsertTest(FuelTestCase):
     def test_same_day_is_replaced_not_duplicated(self) -> None:
         with db.connect() as c:
             db.upsert_price_points(
@@ -138,9 +165,10 @@ class UpsertTest(unittest.TestCase):
         self.assertAlmostEqual(got["weekly"], 1.88)
 
 
-class ChartPayloadTest(unittest.TestCase):
+class ChartPayloadTest(FuelTestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        super().setUpClass()
         _seed()
 
     def test_payload_has_oil_and_series(self) -> None:
@@ -198,8 +226,13 @@ class ChartPayloadTest(unittest.TestCase):
             self.assertTrue(all(isinstance(v, int | float) for v in values))
 
 
-class CoverageTest(unittest.TestCase):
+class CoverageTest(FuelTestCase):
     """coverage unterscheidet 'nie importiert' von 'Zeitraum passt nicht'."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        _seed()
 
     def test_coverage_spans_the_whole_database(self) -> None:
         cov = build_chart_payload()["coverage"]
@@ -239,9 +272,10 @@ def _price_key(p: dict) -> tuple:
     return (p["country"], p["fuel"], p["basis"], p["granularity"])
 
 
-class LatestSnapshotTest(unittest.TestCase):
+class LatestSnapshotTest(FuelTestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        super().setUpClass()
         _seed()
 
     def test_exactly_one_point_per_series(self) -> None:
@@ -286,7 +320,7 @@ class LatestSnapshotTest(unittest.TestCase):
             self.assertIn("sample_size", p)
 
 
-class AuthConfigTest(unittest.TestCase):
+class AuthConfigTest(FuelTestCase):
     def test_env_names_match_dockerfile_and_chart(self) -> None:
         # Die Variablen, die Dockerfile und Chart setzen, muessen im Code
         # gelesen werden - sonst zeigt der Container auf ein leeres Verzeichnis.
@@ -308,7 +342,7 @@ class AuthConfigTest(unittest.TestCase):
         self.assertIn("TANKERKOENIG_API_KEY", helpers)
 
 
-class UserAgentTest(unittest.TestCase):
+class UserAgentTest(FuelTestCase):
     """Regression: FRED antwortet nur auf User-Agents mit Kontakt-URL."""
 
     def test_user_agent_carries_a_contact_url(self) -> None:
@@ -325,7 +359,7 @@ class UserAgentTest(unittest.TestCase):
             self.assertIn("USER_AGENT", source, f"{name} setzt keinen User-Agent")
 
 
-class ChartRunnerContractTest(unittest.TestCase):
+class ChartRunnerContractTest(FuelTestCase):
     """Die Flags, die das Helm-Chart benutzt, muessen existieren."""
 
     def test_daily_flags(self) -> None:
@@ -343,3 +377,102 @@ class ChartRunnerContractTest(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int, payload: dict | None = None) -> None:
+        self.status_code = status_code
+        self._payload = payload or {}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError(
+                "upstream error",
+                request=httpx.Request(
+                    "GET", "https://creativecommons.tankerkoenig.de/json/list.php?apikey=GEHEIM"
+                ),
+                response=httpx.Response(self.status_code),
+            )
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeClient:
+    """Gibt Antworten der Reihe nach aus; die letzte wird wiederholt."""
+
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        self._responses = list(responses)
+        self.calls = 0
+
+    def get(self, url: str, params: dict | None = None) -> _FakeResponse:
+        self.calls += 1
+        if len(self._responses) > 1:
+            return self._responses.pop(0)
+        return self._responses[0]
+
+
+class TankerkoenigRobustnessTest(FuelTestCase):
+    """Regression: die API drosselt, und der Key darf nicht im Log landen."""
+
+    def test_retries_a_503_and_succeeds(self) -> None:
+        ok = _FakeResponse(200, {"ok": True, "stations": [{"id": "1"}]})
+        client = _FakeClient([_FakeResponse(503), ok])
+        with patch.object(tk.time, "sleep"):
+            stations = tk.fetch_area(client, 50.0, 9.0)
+        self.assertEqual([s["id"] for s in stations], ["1"])
+        self.assertEqual(client.calls, 2)
+
+    def test_gives_up_after_the_configured_attempts(self) -> None:
+        client = _FakeClient([_FakeResponse(503)])
+        with patch.object(tk.time, "sleep"), self.assertRaises(RuntimeError) as ctx:
+            tk.fetch_area(client, 50.0, 9.0)
+        self.assertEqual(str(ctx.exception), "HTTP 503")
+        self.assertEqual(client.calls, tk.RETRY_ATTEMPTS)
+
+    def test_api_key_never_appears_in_the_error(self) -> None:
+        # In der Exception-URL steht apikey=... - die Meldung darf sie nicht kopieren.
+        client = _FakeClient([_FakeResponse(500)])
+        with patch.object(tk.time, "sleep"), self.assertRaises(RuntimeError) as ctx:
+            tk.fetch_area(client, 50.0, 9.0)
+        self.assertNotIn("GEHEIM", str(ctx.exception))
+
+    def test_collect_paces_the_requests(self) -> None:
+        client = _FakeClient([_FakeResponse(200, {"ok": True, "stations": []})])
+        with patch.object(tk.time, "sleep") as sleep:
+            tk._collect_all(client, [(50.0, 9.0), (51.0, 9.0), (52.0, 9.0)])
+        self.assertEqual(sleep.call_count, 2)
+        for call in sleep.call_args_list:
+            self.assertEqual(call.args[0], tk.REQUEST_DELAY_SECONDS)
+
+    def test_ingest_refuses_to_publish_a_distorted_average(self) -> None:
+        # 30 von 56 Punkten fielen real aus; der Mittelwert waere aus einer
+        # raeumlich verzerrten Teilmenge entstanden. Dann: nichts schreiben.
+        stations = {
+            str(i): {
+                "id": str(i), "e5": "2.1", "e10": "2.0", "diesel": "2.2",
+                "coords": {"lat": 50.0, "lng": 9.0}, "place": f"Ort{i}",
+            }
+            for i in range(50)
+        }
+        with patch.object(tk, "_collect_all", return_value=(stations, 30)), self.assertRaises(
+            RuntimeError
+        ) as ctx:
+            tk.ingest()
+        self.assertIn("verzerrt", str(ctx.exception))
+        with db.connect() as c:
+            self.assertEqual(c.execute("SELECT count(*) FROM price_points").fetchone()[0], 0)
+
+    def test_ingest_writes_when_only_few_points_fail(self) -> None:
+        stations = {
+            str(i): {
+                "id": str(i), "e5": "2.1", "e10": "2.0", "diesel": "2.2",
+                "coords": {"lat": 50.0, "lng": 9.0}, "place": f"Ort{i}",
+            }
+            for i in range(50)
+        }
+        with patch.object(tk, "_collect_all", return_value=(stations, 2)):
+            written = tk.ingest()
+        self.assertEqual(written, 3)
+        with db.connect() as c:
+            self.assertEqual(c.execute("SELECT count(*) FROM station_prices").fetchone()[0], 50)

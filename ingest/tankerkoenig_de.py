@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import os
 import statistics
+import time
 
 import httpx
 
@@ -48,6 +50,17 @@ PRICE_KEYS = {"e5": ("e5", "price"), "e10": ("e10", "price_e10"), "diesel": ("di
 MIN_PLAUSIBLE = 0.5
 MAX_PLAUSIBLE = 5.0
 
+# Ohne Pause zwischen den Abfragen drosselt die API: gemessen auf dem Cluster
+# lieferten 30 von 56 Rasterpunkten HTTP 503, und der Tagesdurchschnitt waere
+# aus einer raeumlich verzerrten Teilmenge entstanden.
+REQUEST_DELAY_SECONDS = float(os.environ.get("TANKERKOENIG_DELAY", "1.5"))
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 2.0
+RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+# Verloren mehr als ein Viertel der Rasterpunkte, ist der Durchschnitt nicht
+# mehr bundesweit repraesentativ. Dann lieber gar nichts schreiben.
+MAX_FAILED_RATIO = 0.25
+
 
 def grid() -> list[tuple[float, float]]:
     return [(lat, lng) for lat in LATITUDES for lng in LONGITUDES]
@@ -62,28 +75,50 @@ def fetch_area(client: httpx.Client, lat: float, lng: float) -> list[dict]:
         "type": "all",
         "apikey": TANKERKOENIG_API_KEY,
     }
-    response = client.get(TANKERKOENIG_URL, params=params)
-    response.raise_for_status()
-    payload = response.json()
-    if not payload.get("ok"):
-        raise RuntimeError(f"Tankerkönig API Fehler: {payload.get('message') or payload}")
-    return payload.get("stations") or []
+    last = "unbekannter Fehler"
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            response = client.get(TANKERKOENIG_URL, params=params)
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            # Nur den Status nennen: in der Exception-URL steht apikey=...
+            status = exc.response.status_code
+            last = f"HTTP {status}"
+            if status not in RETRY_STATUS or attempt == RETRY_ATTEMPTS:
+                break
+        except httpx.HTTPError as exc:
+            last = type(exc).__name__
+            if attempt == RETRY_ATTEMPTS:
+                break
+        except ValueError:
+            last = "keine JSON-Antwort"
+            break
+        else:
+            if not payload.get("ok"):
+                raise RuntimeError(f"Tankerkönig API Fehler: {payload.get('message') or payload}")
+            return payload.get("stations") or []
+        time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+    raise RuntimeError(last)
 
 
-def collect(client: httpx.Client | None = None, *, max_requests: int | None = None) -> list[dict]:
+def _collect_all(
+    client: httpx.Client | None, points: list[tuple[float, float]]
+) -> tuple[dict[str, dict], int]:
     owns_client = client is None
     client = client or httpx.Client(
         timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}, follow_redirects=True
     )
     stations: dict[str, dict] = {}
-    points = grid()
-    if max_requests is not None:
-        points = points[:max_requests]
+    failed = 0
     try:
         for index, (lat, lng) in enumerate(points, 1):
+            if index > 1 and REQUEST_DELAY_SECONDS > 0:
+                time.sleep(REQUEST_DELAY_SECONDS)
             try:
                 found = fetch_area(client, lat, lng)
             except (httpx.HTTPError, RuntimeError) as exc:
+                failed += 1
                 log.warning("Rasterpunkt %.2f/%.2f fehlgeschlagen: %s", lat, lng, exc)
                 continue
             for station in found:
@@ -95,6 +130,14 @@ def collect(client: httpx.Client | None = None, *, max_requests: int | None = No
     finally:
         if owns_client:
             client.close()
+    return stations, failed
+
+
+def collect(client: httpx.Client | None = None, *, max_requests: int | None = None) -> list[dict]:
+    points = grid()
+    if max_requests is not None:
+        points = points[:max_requests]
+    stations, _failed = _collect_all(client, points)
     return list(stations.values())
 
 
@@ -167,9 +210,19 @@ def _station_rows(stations: list[dict], day: str) -> list[tuple]:
 def ingest(*, day: dt.date | None = None, max_requests: int | None = None) -> int:
     started = db.utcnow()
     day = day or dt.date.today()
-    stations = collect(max_requests=max_requests)
+    points = grid()
+    if max_requests is not None:
+        points = points[:max_requests]
+    stations_map, failed = _collect_all(None, points)
+    stations = list(stations_map.values())
     if not stations:
         raise RuntimeError("keine Tankstellen von Tankerkönig erhalten")
+    if points and failed / len(points) > MAX_FAILED_RATIO:
+        raise RuntimeError(
+            f"{failed} von {len(points)} Rasterpunkten fehlgeschlagen "
+            f"(mehr als {MAX_FAILED_RATIO:.0%}) - der Tagesdurchschnitt waere "
+            f"rueumlich verzerrt, deshalb wird nichts geschrieben"
+        )
 
     places = {s.get("place") for s in stations if s.get("place")}
     if len(places) < 10 or TANKERKOENIG_API_KEY == TANKERKOENIG_DEMO_KEY:
@@ -198,6 +251,7 @@ def ingest(*, day: dt.date | None = None, max_requests: int | None = None) -> in
             conn, SOURCE, started, rows=written, status="ok",
             message=(
                 f"{len(stations)} Tankstellen, {len(places)} Orte, "
+                f"{failed}/{len(points)} Rasterpunkte ausgefallen, "
                 f"key={'demo' if TANKERKOENIG_API_KEY == TANKERKOENIG_DEMO_KEY else 'eigen'}"
             ),
         )

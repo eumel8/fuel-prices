@@ -78,6 +78,18 @@ export TANKERKOENIG_API_KEY=<key>
 Das Diagramm rastert Deutschland und fragt je Punkt ab; `--max-requests`
 begrenzt das für Tests.
 
+**Drosselung ist Pflicht.** Auf dem Cluster fielen ohne Pause zwischen den
+Abfragen 30 von 56 Rasterpunkten mit HTTP 503 aus. Der Tagesdurchschnitt wäre
+dann aus einer räumlich verzerrten Teilmenge entstanden — dieselbe Fehlerart wie
+beim Demo-Key. Deshalb:
+
+- `TANKERKOENIG_DELAY` (Default `1.5` s) pausiert zwischen den Punkten.
+- HTTP 429/5xx werden mit Backoff wiederholt.
+- Fällt mehr als ein Viertel der Punkte aus, bricht der Lauf ab, statt einen
+  verzerrten Bundesdurchschnitt zu schreiben. Der Lauf erscheint dann als
+  fehlgeschlagen in `/api/series` → `lastIngest`.
+- Fehlermeldungen nennen nur den HTTP-Status, nie die URL: darin stünde der Key.
+
 ## Docker
 
 ```bash
