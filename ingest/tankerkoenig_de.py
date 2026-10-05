@@ -54,8 +54,10 @@ MAX_PLAUSIBLE = 5.0
 # lieferten 30 von 56 Rasterpunkten HTTP 503, und der Tagesdurchschnitt waere
 # aus einer raeumlich verzerrten Teilmenge entstanden.
 REQUEST_DELAY_SECONDS = float(os.environ.get("TANKERKOENIG_DELAY", "1.5"))
-RETRY_ATTEMPTS = 3
-RETRY_BACKOFF_SECONDS = 2.0
+# Das Kontingent der API erholt sich erst nach 15-30 s (gemessen); ein
+# Backoff von 2+4 s liess die letzten 13 Rasterpunkte dauerhaft scheitern.
+RETRY_ATTEMPTS = 4
+RETRY_BACKOFF_SECONDS = float(os.environ.get("TANKERKOENIG_BACKOFF", "15"))
 RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 # Verloren mehr als ein Viertel der Rasterpunkte, ist der Durchschnitt nicht
 # mehr bundesweit repraesentativ. Dann lieber gar nichts schreiben.

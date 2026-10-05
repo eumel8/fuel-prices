@@ -84,7 +84,8 @@ dann aus einer räumlich verzerrten Teilmenge entstanden — dieselbe Fehlerart 
 beim Demo-Key. Deshalb:
 
 - `TANKERKOENIG_DELAY` (Default `1.5` s) pausiert zwischen den Punkten.
-- HTTP 429/5xx werden mit Backoff wiederholt.
+- HTTP 429/5xx werden mit Backoff wiederholt (`TANKERKOENIG_BACKOFF`, Default 15 s,
+  steigend). Gemessen: das Kontingent erholt sich erst nach 15–30 s.
 - Fällt mehr als ein Viertel der Punkte aus, bricht der Lauf ab, statt einen
   verzerrten Bundesdurchschnitt zu schreiben. Der Lauf erscheint dann als
   fehlgeschlagen in `/api/series` → `lastIngest`.
